@@ -58,66 +58,52 @@ public class PrivateKeyDecryptorHelper {
     @Autowired
 	private io.mosip.kernel.core.keymanager.spi.KeyStore keyStore;
 
-    public KeyStore getDBKeyStoreData (String certThumbprintHex, String applicationId, String referenceId) {
+    public KeyStore getDBKeyStoreData(String certThumbprintHex, String applicationId, String referenceId) {
 
-        String appIdRefIdKey = applicationId + KeymanagerConstant.HYPHEN + referenceId;
-        String compMasterKeyRefId = applicationId + KeymanagerConstant.HYPHEN + KeymanagerConstant.COMPONENT_MASTER_KEY_DUMMY_REF; 
-        
-        // Log incoming parameters for tracing
+    String appIdRefIdKey = applicationId + KeymanagerConstant.HYPHEN + referenceId;
+    String compMasterKeyRefId = applicationId + KeymanagerConstant.HYPHEN + KeymanagerConstant.COMPONENT_MASTER_KEY_DUMMY_REF; 
+    
+    // Log incoming parameters for tracing
+    LOGGER.info(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
+            "Entering getDBKeyStoreData with Input certThumbprintHex: [" + certThumbprintHex + 
+            "], ApplicationId: [" + applicationId + "], ReferenceId: [" + referenceId + "]");
+
+    // Always query the database directly
+    KeyStore dbKeyStore = dbHelper.getKeyAlias(certThumbprintHex, appIdRefIdKey, applicationId, referenceId);
+
+    if (Objects.isNull(dbKeyStore)) {
+        LOGGER.error(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
+                "Database returned null KeyStore for thumbprint: [" + certThumbprintHex + 
+                "] and appIdRefIdKey: [" + appIdRefIdKey + "]");
+    } else {
         LOGGER.info(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
-                "Entering getDBKeyStoreData with Input certThumbprintHex: [" + certThumbprintHex + 
-                "], ApplicationId: [" + applicationId + "], ReferenceId: [" + referenceId + "]");
+                "Database returned KeyStore successfully. Retrieved Alias: [" + dbKeyStore.getAlias() + "]");
+    }
 
-        KeyStore dbKeyStore = cacheKeyStore.getOrDefault(certThumbprintHex, null);
+    // Validation check (no cache involved)
+    LOGGER.info(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
+            "Validation Check -> Input appIdRefIdKey: [" + appIdRefIdKey + 
+            "], compMasterKeyRefId: [" + compMasterKeyRefId + 
+            "], for input thumbprint: [" + certThumbprintHex + "]");
 
-        if(Objects.isNull(dbKeyStore)) {
-            LOGGER.info(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
-                    "Cache miss for certThumbprintHex: [" + certThumbprintHex + "]. Querying database.");
-            dbKeyStore = dbHelper.getKeyAlias(certThumbprintHex, appIdRefIdKey, applicationId, referenceId);
-            
-            if (Objects.isNull(dbKeyStore)) {
-                LOGGER.error(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
-                        "Database returned null KeyStore for thumbprint: [" + certThumbprintHex + 
-                        "] and appIdRefIdKey: [" + appIdRefIdKey + "]");
-            } else {
-                LOGGER.info(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
-                        "Database returned KeyStore successfully. Retrieved Alias: [" + dbKeyStore.getAlias() + "]");
-            }
+    // Since cacheReferenceIds is removed, validate directly against appIdRefIdKey or compMasterKeyRefId
+    if (Objects.nonNull(dbKeyStore)) {
+        String resolvedRefId = Objects.isNull(dbKeyStore.getPrivateKey()) ? compMasterKeyRefId : appIdRefIdKey;
 
-            cacheKeyStore.put(certThumbprintHex, dbKeyStore);
-            // Added condition to handle issue related to decryption error with Master key.
-            if (Objects.nonNull(dbKeyStore) && Objects.isNull(dbKeyStore.getPrivateKey())) {
-                cacheReferenceIds.put(certThumbprintHex, compMasterKeyRefId);
-            } else {
-                cacheReferenceIds.put(certThumbprintHex, appIdRefIdKey);
-            }
-        } else {
-            LOGGER.info(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
-                    "Cache hit found for certThumbprintHex: [" + certThumbprintHex + "]");
-        }
-
-        String cachedRefId = cacheReferenceIds.getOrDefault(certThumbprintHex, null);
-        
-        // Detailed log tracking the validation check values
-        LOGGER.info(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
-                "Validation Check -> Input appIdRefIdKey: [" + appIdRefIdKey + 
-                "], compMasterKeyRefId: [" + compMasterKeyRefId + 
-                "], cachedRefId from cache: [" + cachedRefId + 
-                "], for input thumbprint: [" + certThumbprintHex + "]");
-
-        if (!appIdRefIdKey.equals(cachedRefId) && !compMasterKeyRefId.equals(cachedRefId)){
+        if (!appIdRefIdKey.equals(resolvedRefId) && !compMasterKeyRefId.equals(resolvedRefId)) {
             LOGGER.error(KeymanagerConstant.SESSIONID, this.getClass().getSimpleName(), KeymanagerConstant.EMPTY,
                 "Application Id & Reference ID not matching with the input thumbprint value(decrypt). " +
                 "Input Thumbprint: [" + certThumbprintHex + 
                 "], Input appIdRefIdKey: [" + appIdRefIdKey + 
-                "], Cached/Resolved RefId: [" + cachedRefId + "]");
+                "], Resolved RefId: [" + resolvedRefId + "]");
             
             throw new KeymanagerServiceException(KeymanagerErrorConstant.APP_ID_REFERENCE_ID_NOT_MATCHING.getErrorCode(),
                 KeymanagerErrorConstant.APP_ID_REFERENCE_ID_NOT_MATCHING.getErrorMessage());
         }
-        
-        return dbKeyStore;
     }
+
+    return dbKeyStore;
+}
 	
     public Object[] getKeyObjects(KeyStore dbKeyStore, boolean fetchMasterKey) {
 		
